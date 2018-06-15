@@ -263,24 +263,34 @@ validimg_feature = np.load(path + '/data/Valid_im.npy')
 testimg_feature = np.load(path + '/data/Test_im.npy')
 trainall_img = np.concatenate([trainimg_feature, validimg_feature], axis=0)
 
-#无注意力模型
+#注意力模型
 print('Building model...')
 
 #图像模型
 encoded_image = Input(shape=(1000,))
+dense_image = Dense(dim*2)(encoded_image)
+batch_image = normalization.BatchNormalization()(dense_image)
+repeat_image = RepeatVector(maxlen)(batch_image)
 
 #问答模型
-encode_question = Input(shape=(quelen,))
-embed_question = Embedding(input_dim=que_dic, output_dim=dim, input_length=quelen)(encode_question)
-lstm_question = Bidirectional(LSTM(dim*2, return_sequences=False))(embed_question)
-lstm_question = normalization.BatchNormalization()(lstm_question)
+encode_question = Input(shape=(maxlen,))
+embed_question = Embedding(input_dim=dic, output_dim=dim, input_length=maxlen)(encode_question)
+lstm_question = Bidirectional(LSTM(dim, return_sequences=True,dropout=0.5))(embed_question)
+batch_question = normalization.BatchNormalization()(lstm_question)
+
+#注意力机制
+merge_attention = add([repeat_image, batch_question])
+act1_attention = Activation('tanh')(merge_attention)
+dense1_attention = TimeDistributed(Dense(1))(act1_attention)
+flat_attention = Flatten()(dense1_attention)
+act2_attention = Activation('softmax')(flat_attention)
+repeat_attention = RepeatVector(dim*2)(act2_attention)
+permute_attention = Permute((2, 1))(repeat_attention)
 
 #合并模型
-merge_model = concatenate([encoded_image, lstm_question])
-reperat_model = RepeatVector(anslen)(merge_model)
-lstm_model = Bidirectional(LSTM(64, return_sequences=True))(reperat_model)
-lstm_model = normalization.BatchNormalization()(lstm_model)
-output_model = TimeDistributed(Dense(ans_dic+1, activation='softmax'))(lstm_model)
+merge_model = concatenate([batch_question, permute_attention])
+batch_model = normalization.BatchNormalization()(merge_model)
+output_model = TimeDistributed(Dense(dic+1, activation='softmax'))(batch_model)
 vqa_model = Model(inputs=[encoded_image, encode_question], outputs=output_model)
 vqa_model.summary()
 
@@ -289,12 +299,12 @@ nadam = optimizers.Nadam()
 vqa_model.compile(loss='categorical_crossentropy', optimizer='nadam', metrics=[metrics.categorical_accuracy])
 
 # 保存模型
-filepath = path + '/data/final无注意96序列4词频有介词.hdf5'
+filepath = path + '/data/final注意96序列4词频有介词.hdf5'
 checkpoint = ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
 callbacks_list = [checkpoint]
 
 #训练模型
-if os.path.isfile(path + '/data/final无注意96序列4词频有介词.hdf5') == False:
+if os.path.isfile(path + '/data/final注意96序列4词频有介词.hdf5') == False:
     print('Training model...')
     history = vqa_model.fit([trainall_img, trainall_feature], trainall_hot, epochs=300, batch_size=256, validation_data=([validimg_feature, validque_feature], validans_hot), callbacks=callbacks_list, verbose=1)
     
@@ -316,7 +326,7 @@ if os.path.isfile(path + '/data/final无注意96序列4词频有介词.hdf5') ==
     plt.show()
 else:
     print('Loading model...')  #载入模型
-    vqa_model.load_weights(path + '/data/final无注意96序列4词频有介词.hdf5', by_name=True)
+    vqa_model.load_weights(path + '/data/final注意96序列4词频有介词.hdf5', by_name=True)
     json_string = vqa_model.to_json()
     vqa_model = model_from_json(json_string)
 	
