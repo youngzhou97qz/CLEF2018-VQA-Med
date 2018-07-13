@@ -1,1 +1,1 @@
-# ImageCLEF 2018 VQA-M
+# ImageCLEF 2018 VQA-Med
