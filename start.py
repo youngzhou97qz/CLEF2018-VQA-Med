@@ -12,7 +12,7 @@ from keras.applications.inception_resnet_v2 import InceptionResNetV2
 from keras.applications.inception_resnet_v2 import preprocess_input
 
 #常量
-path = 'C:/Users/zhou yangyang/VQA'
+path = '../VQA'
 quelen = 9  #序列长度
 anslen = 6
 que_dic = 1000  #频数4以上
@@ -299,16 +299,18 @@ nadam = optimizers.Nadam()
 vqa_model.compile(loss='categorical_crossentropy', optimizer='nadam', metrics=[metrics.categorical_accuracy])
 
 # 保存模型
-filepath = path + '/data/final注意96序列4词频有介词.hdf5'
+filepath = path + '/data/MODEL.hdf5'
 checkpoint = ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
 callbacks_list = [checkpoint]
 
 #训练模型
-if os.path.isfile(path + '/data/final注意96序列4词频有介词.hdf5') == False:
+if os.path.isfile(path + '/data/MODEL.hdf5') == False:
     print('Training model...')
-    history = vqa_model.fit([trainall_img, trainall_feature], trainall_hot, epochs=300, batch_size=256, validation_data=([validimg_feature, validque_feature], validans_hot), callbacks=callbacks_list, verbose=1)
+    history = vqa_model.fit([trainimg_feature, trainque_feature], trainans_hot, epochs=100, batch_size=256, validation_data=([validimg_feature, validque_feature], validans_hot), callbacks=callbacks_list, verbose=1)
     
     #可视化训练过程
+    fig = plt.figure()
+    fig.set_dpi(300)
     plt.plot(history.history['categorical_accuracy'])
     plt.plot(history.history['val_categorical_accuracy'])
     plt.title('model accuracy')
@@ -316,7 +318,10 @@ if os.path.isfile(path + '/data/final注意96序列4词频有介词.hdf5') == Fa
     plt.xlabel('epoch')
     plt.legend(['train', 'valid'], loc='upper left')
     plt.show()
-
+    fig.savefig(path + '/data/MODELA.png')
+    
+    fig = plt.figure()
+    fig.set_dpi(300)    
     plt.plot(history.history['loss'])
     plt.plot(history.history['val_loss'])
     plt.title('model loss')
@@ -324,10 +329,11 @@ if os.path.isfile(path + '/data/final注意96序列4词频有介词.hdf5') == Fa
     plt.xlabel('epoch')
     plt.legend(['train', 'valid'], loc='upper left')
     plt.show()
+    fig.savefig(path + '/data/MODELL.png')
 else:
     print('Loading model...')  #载入模型
-    vqa_model.load_weights(path + '/data/final注意96序列4词频有介词.hdf5', by_name=True)
-    json_string = vqa_model.to_json()
+    vqa_model.load_weights(path + '/data/MODEL.hdf5', by_name=True)  
+    json_string = vqa_model.to_json()  
     vqa_model = model_from_json(json_string)
 	
 #测试结果
@@ -355,10 +361,10 @@ for i in range(ans_dic):
         ind_a[i+1] = ind_a[i+1]+'l'
     if ind_a[i+1] == 'axilla':
         ind_a[i+1] = ind_a[i+1]+'ry'
-    #if ind_a[i+1] == 'po':
-        #ind_a[i+1] = 't2'
-    #if ind_a[i+1] == 'num':
-        #ind_a[i+1] = '10'
+    if ind_a[i+1] == 'po':
+        ind_a[i+1] = 't2'
+    if ind_a[i+1] == 'num':
+        ind_a[i+1] = '10'
         
 #生成答句文件
 def final_ans(data, num):
