@@ -24,7 +24,7 @@ from keras.applications.inception_v3 import *
 from keras.applications.inception_resnet_v2 import *
 
 #常量
-path = '/home/yzhou/VQA'
+#path = '/home/yzhou/VQA'
 path = 'C:/Users/zhou yangyang/VQA'
 maxlen = 10
 dic = 1000
@@ -629,7 +629,7 @@ def beam_ans(data, num):
             i = h
         if kbeam(ans,maxlen,i)[-1][-1][1] == 0:
             fp.write('abnormality\n')  #低频词用“异常”替换
-        elif (feature[i][0] == dic_q['do'] or feature[i][0] == dic_q['be']) and (np.argmax(ans[i][0],axis=0) != dic_a['ye'] and np.argmax(ans[i][0],axis=0) != dic_a['no']):
+        elif (feature[i][0] == dic_q['do'] or feature[i][0] == dic_q['be']) and (np.argmax(ans[i][0],axis=0) != dic_a['yes'] and np.argmax(ans[i][0],axis=0) != dic_a['no']):
             fp.write('no\n')    #是非题如果答案不是“yes”或“no”的替换
         else:
             for j in range(maxlen):
@@ -673,7 +673,7 @@ def greedy_ans(data, num):
             i = h
         if np.argmax(ans[i][0],axis=0) == 0:
             fp.write('abnormality\n')  #低频词用“异常”替换
-        elif (feature[i][0] == dic_q['do'] or feature[i][0] == dic_q['be']) and (np.argmax(ans[i][0],axis=0) != dic_a['ye'] and np.argmax(ans[i][0],axis=0) != dic_a['no']):
+        elif (feature[i][0] == dic_q['do'] or feature[i][0] == dic_q['be']) and (np.argmax(ans[i][0],axis=0) != dic_a['yes'] and np.argmax(ans[i][0],axis=0) != dic_a['no']):
             fp.write('no\n')    #是非题如果答案不是“yes”或“no”的替换
         else:
             for j in range(maxlen):
