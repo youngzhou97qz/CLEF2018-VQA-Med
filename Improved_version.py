@@ -1,4 +1,5 @@
-#translate,word2vec,new model,beam search.
+#unfinished
+#The part to be added: translate,word2vec,new model,beam search.
 import sys
 import keras
 import re
