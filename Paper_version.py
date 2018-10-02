@@ -11,24 +11,24 @@ from keras.callbacks import ModelCheckpoint
 from keras.applications.inception_resnet_v2 import InceptionResNetV2
 from keras.applications.inception_resnet_v2 import preprocess_input
 
-#常量
+#parameter
 path = '../VQA'
-quelen = 9  #序列长度
+quelen = 9  #sequence length
 anslen = 6
-que_dic = 1000  #频数4以上
+que_dic = 1000  #word frequency > 4
 ans_dic = 1000
-dim = 128  #神经元基数
-increase = 20  #图像变形数量
-if os.path.exists(path + '/data/') == False:  #创建数据存放文件夹
+dim = 128
+increase = 20  #enhancement
+if os.path.exists(path + '/data/') == False:  #Create folder
     os.mkdir(path + '/data/')
 
-#函数：处理文件
+#Processing files
 def data_processing(data):
-    data_num  = open(path + '/data/' + data + '.num', 'w',encoding='utf-8')  # 序号
-    data_name = open(path + '/data/' + data + '.name','w',encoding='utf-8')  # 文件名
-    data_que  = open(path + '/data/' + data + '.q', 'w',encoding='utf-8')  # 问题
+    data_num  = open(path + '/data/' + data + '.num', 'w',encoding='utf-8')  
+    data_name = open(path + '/data/' + data + '.name','w',encoding='utf-8')  
+    data_que  = open(path + '/data/' + data + '.q', 'w',encoding='utf-8')  
     if data != 'Test':
-        data_ans  = open(path + '/data/' + data + '.a', 'w',encoding='utf-8')  # 答案
+        data_ans  = open(path + '/data/' + data + '.a', 'w',encoding='utf-8')  
     with open(path + '/VQAMed2018' + data + '/VQAMed2018' + data + '-QA.csv', encoding='utf-8') as f:
         for line in f:
             data_num.write(line.split('	')[0]+'\n')
@@ -44,21 +44,21 @@ def data_processing(data):
     if data != 'Test':
         data_ans.close()
 
-#处理文件
+#Processing files
 print('Generating data files...')
 if os.path.isfile(path + '/data/Test.num') == False:
     data_processing('Train')
     data_processing('Valid')
     data_processing('Test')
 
-#计算文件数量
+#count
 num_train = len(open(path + '/data/Train.num', 'r').readlines())
 num_valid = len(open(path + '/data/Valid.num', 'r').readlines())
 num_test = len(open(path + '/data/Test.num', 'r').readlines())
 
-#函数：处理图像
+#Processing image
 def img_processing(data):
-    f = open(path + '/data/' + data + '.name')  #读取图片名
+    f = open(path + '/data/' + data + '.name')
     im = []
     i = 0
     z = np.zeros((1,1000))
@@ -68,18 +68,18 @@ def img_processing(data):
         if not lines:
             break
         for line in lines:
-            line = line.strip()  #去掉图片名后面的'\n'
+            line = line.strip()
             if os.path.isfile(path + '/VQAMed2018' + data + '/VQAMed2018' + data + '-images/' + line + '.jpg') == True:
                 img_path = path + '/VQAMed2018' + data + '/VQAMed2018' + data + '-images/' + line + '.jpg'
-                img = image.load_img(img_path, target_size=(224, 224))  #读取文件
+                img = image.load_img(img_path, target_size=(224, 224))
                 x = image.img_to_array(img)
                 x = np.expand_dims(x, axis=0)
                 x_o = preprocess_input(x)
-                y = model_1.predict(x_o)  #提取特征量
+                y = model_1.predict(x_o)
                 y = y.tolist()
                 im.append(y)
                 if data != 'Test':
-                    for k in range(increase):  #图像增强
+                    for k in range(increase):  #enhancement
                         j = 0
                         for x_n in datagen.flow(x, batch_size=1):
                             j += 1
@@ -90,39 +90,39 @@ def img_processing(data):
                         y = y.tolist()
                         im.append(y)
             else:
-                im.append(z)  #找不到图片时
+                im.append(z)
                 print('Picture NO.', i+1, ' could not be found.')
             i += 1
             if data == 'Train':
-                num_arrow = int(i * 50 / num_train) + 1  #计算显示多少个'>'
-                percent = i * 100.0 / (num_train)  #计算完成进度，格式为xx.xx%
+                num_arrow = int(i * 50 / num_train) + 1
+                percent = i * 100.0 / (num_train)
             elif data == 'Valid':
                 num_arrow = int(i * 50 / num_valid) + 1
                 percent = i * 100.0 / (num_valid)
             elif data == 'Test':
                 num_arrow = int(i * 50 / num_test) + 1
                 percent = i * 100.0 / (num_test)
-            num_line = 50 - num_arrow  #计算显示多少个'-'
+            num_line = 50 - num_arrow
             process_bar = data +': [' + '>' * num_arrow + '-' * num_line + ']'\
                       + '%.2f' % percent + '%' + '\r'
-            sys.stdout.write(process_bar) #这两句打印字符到终端
+            sys.stdout.write(process_bar)
             sys.stdout.flush()
     im = np.array(im)
-    im = np.squeeze(im)  #去掉为1的维度
+    im = np.squeeze(im)
     np.save(path + '/data/' + data + '_im.npy', im)
     print('\n')
     f.close()
 
-#保存图像特征
+#Image feature
 print('Turning images into vectors...')
 if os.path.isfile(path + '/data/Test_im.npy') == False:
-    model_1 = InceptionResNetV2(weights='imagenet')  #加载InceptionResNetV2模型
+    model_1 = InceptionResNetV2(weights='imagenet')  #The TF and Keras versions are related to this code.
     datagen = ImageDataGenerator(rotation_range=15, width_shift_range=0.1, height_shift_range=0.1, shear_range=0.1, zoom_range=0.1)  #图像增强器
     img_processing('Train')
     img_processing('Valid')
     img_processing('Test')
 
-#函数：词形还原，数字替换，停用词删除
+#lemmatization, stop words
 def pretreat_q(data):
     global train_que, valid_que, test_que, quelist
     fw = open(path + '/data/' + data + '.que', 'w')
@@ -132,14 +132,14 @@ def pretreat_q(data):
         line = line.replace('\n', '').split(' ')
         j = len(line)
         for i in range(j):
-            for div in ['the','of','in','and','a','with','to','an','at','on','from','after','into']:  #停用词删除'the','of','in','and','a','with','to','an','at','on','from','after','into'
+            for div in ['the','of','in','and','a','with','to','an','at','on','from','after','into']:
                 if line[i] == div:
                     line[i] = ''
-            if re.match(r'[0-9]+', line[i]):  #数字替换
+            if re.match(r'[0-9]+', line[i]):
                 line[i] = 'num'
             elif re.match(r'[a-z][0-9]+', line[i]):
                 line[i] = 'pos'
-            line[i] = lemma(line[i])  #词形还原
+            line[i] = lemma(line[i])
             if line[i] == 'have':
                 line[i] = ''
             if i != j-1:
@@ -151,20 +151,20 @@ def pretreat_q(data):
     f.close()
     fw.close()
 
-#问句预处理
+#Question preprocessing
 if os.path.isfile(path + '/data/Test.que') == False:
     pretreat_q('Train')
     pretreat_q('Valid')
     pretreat_q('Test')
 
-#函数：答句
+#
 def pretreat_a(data):
     global train_ans, valid_ans, anslist
     fw = open(path + '/data/' + data + '.ans', 'w')
     f = open(path + '/data/' + data + '.a')
     lines = f.readlines()
     for line in lines:
-        line = line.replace('\n', '').split(' ')  #手动分词
+        line = line.replace('\n', '').split(' ')
         j = len(line)
         for i in range(j):  #'the','and','a','an','with'
             for div in ['the','and','a','an','with']:
@@ -186,12 +186,12 @@ def pretreat_a(data):
     f.close()
     fw.close()
 
-#答句预处理
+#Answer preprocessing
 if os.path.isfile(path + '/data/Valid.ans') == False:
     pretreat_a('Train')
     pretreat_a('Valid')
 
-#加载问答
+#Load question and answer
 train_que, train_ans, valid_que, valid_ans, test_que, quelist, anslist = [], [], [], [], [], [], []
 f = open(path + '/data/Train.que')
 lines = f.readlines()
@@ -200,7 +200,7 @@ for line in lines:
     quelist.append(line)
     train_que.append(line)
     for div in [' show',' scan',' image',' demonstrate',' axial',' reveal',' contrast',' enhance',' large',' enhancement', ' area',' section',' thi',' well',' soft',' side', ' view',' small',' complete',' postoperative']:
-        train_que.append(line.replace(div, ''))  #问句增强
+        train_que.append(line.replace(div, ''))
 f.close()
 f = open(path + '/data/Valid.que')
 lines = f.readlines()
@@ -235,11 +235,11 @@ for line in lines:
     anslist.append(line)
 f.close()
 
-#分词
+#Tokenizer
 print('Turning Q&A into vectors...')
 tokenizer_q = text.Tokenizer(num_words=que_dic)
 tokenizer_q.fit_on_texts(quelist)
-trainque_feature = tokenizer_q.texts_to_sequences(train_que)  #文本向量化
+trainque_feature = tokenizer_q.texts_to_sequences(train_que)
 validque_feature = tokenizer_q.texts_to_sequences(valid_que)
 testque_feature = tokenizer_q.texts_to_sequences(test_que)
 trainque_feature = sequence.pad_sequences(trainque_feature, quelen, padding='post', value=0, truncating='post')  #统一序列长度
@@ -257,28 +257,28 @@ trainans_hot = keras.utils.to_categorical(trainans_feature, ans_dic+1)  #one-hot
 validans_hot = keras.utils.to_categorical(validans_feature, ans_dic+1)
 trainall_hot = np.concatenate([trainans_hot, validans_hot], axis=0)
 
-#读取图像特征数据
+#Read image feature
 trainimg_feature = np.load(path + '/data/Train_im.npy')
 validimg_feature = np.load(path + '/data/Valid_im.npy')
 testimg_feature = np.load(path + '/data/Test_im.npy')
 trainall_img = np.concatenate([trainimg_feature, validimg_feature], axis=0)
 
-#注意力模型
+#model
 print('Building model...')
 
-#图像模型
+#image
 encoded_image = Input(shape=(1000,))
 dense_image = Dense(dim*2)(encoded_image)
 batch_image = normalization.BatchNormalization()(dense_image)
 repeat_image = RepeatVector(maxlen)(batch_image)
 
-#问答模型
+#Q&A
 encode_question = Input(shape=(maxlen,))
 embed_question = Embedding(input_dim=dic, output_dim=dim, input_length=maxlen)(encode_question)
 lstm_question = Bidirectional(LSTM(dim, return_sequences=True,dropout=0.5))(embed_question)
 batch_question = normalization.BatchNormalization()(lstm_question)
 
-#注意力机制
+#attention
 merge_attention = add([repeat_image, batch_question])
 act1_attention = Activation('tanh')(merge_attention)
 dense1_attention = TimeDistributed(Dense(1))(act1_attention)
@@ -287,38 +287,26 @@ act2_attention = Activation('softmax')(flat_attention)
 repeat_attention = RepeatVector(dim*2)(act2_attention)
 permute_attention = Permute((2, 1))(repeat_attention)
 
-#合并模型
+#merge
 merge_model = concatenate([batch_question, permute_attention])
 batch_model = normalization.BatchNormalization()(merge_model)
 output_model = TimeDistributed(Dense(dic+1, activation='softmax'))(batch_model)
 vqa_model = Model(inputs=[encoded_image, encode_question], outputs=output_model)
 vqa_model.summary()
 
-#编译模型
+#compile
 nadam = optimizers.Nadam()
 vqa_model.compile(loss='categorical_crossentropy', optimizer='nadam', metrics=[metrics.categorical_accuracy])
 
-# 保存模型
+#save
 filepath = path + '/data/MODEL.hdf5'
 checkpoint = ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
 callbacks_list = [checkpoint]
 
-#训练模型
+#train
 if os.path.isfile(path + '/data/MODEL.hdf5') == False:
     print('Training model...')
     history = vqa_model.fit([trainimg_feature, trainque_feature], trainans_hot, epochs=100, batch_size=256, validation_data=([validimg_feature, validque_feature], validans_hot), callbacks=callbacks_list, verbose=1)
-    
-    #可视化训练过程
-    fig = plt.figure()
-    fig.set_dpi(300)
-    plt.plot(history.history['categorical_accuracy'])
-    plt.plot(history.history['val_categorical_accuracy'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'valid'], loc='upper left')
-    plt.show()
-    fig.savefig(path + '/data/MODELA.png')
     
     fig = plt.figure()
     fig.set_dpi(300)    
@@ -331,23 +319,23 @@ if os.path.isfile(path + '/data/MODEL.hdf5') == False:
     plt.show()
     fig.savefig(path + '/data/MODELL.png')
 else:
-    print('Loading model...')  #载入模型
+    print('Loading model...')  #load
     vqa_model.load_weights(path + '/data/MODEL.hdf5', by_name=True)  
     json_string = vqa_model.to_json()  
     vqa_model = model_from_json(json_string)
 	
-#测试结果
+#evaluation
 print('Answer generating...')
-dic_q = tokenizer_q.word_index  #字典-索引
-ind_q ={value:key for key, value in dic_q.items()}  #索引-字典
+dic_q = tokenizer_q.word_index  #dic-index
+ind_q ={value:key for key, value in dic_q.items()}  #index-dic
 dic_a = tokenizer_a.word_index
 ind_a ={value:key for key, value in dic_a.items()}
 
-#修正输出词
+#Correcting missing words
 def dic_fix_s(word):
     for i in range(ans_dic):
         if ind_a[i+1] == word:
-            ind_a[i+1] = ind_a[i+1]+'s'  #不完整词还原
+            ind_a[i+1] = ind_a[i+1]+'s'
 for div in ['thi','sinu','pelvi','pancrea','thrombosi','necrosi','corpu','stenosi','metastasi','ye','venou','thrombu','uteru','thalamu','pon','esophagu','cavernou','sac','meniscu','los','conu','rib','nucleu','fibrosi','ramu','rectu','agenesi','hi','bulbu','osseou','osteomyeliti','edematou','tuberculosi','plexu','clivu','pneumocephalu','atelectasi','vermi','globu','sclerosi','iliopsoa','psoa','supraspinatu','hydronephrosi']:
     dic_fix_s(div)
 for i in range(ans_dic):
@@ -366,7 +354,7 @@ for i in range(ans_dic):
     if ind_a[i+1] == 'num':
         ind_a[i+1] = '10'
         
-#生成答句文件
+#Generate answer
 def final_ans(data, num):
     if data == 'Train':
         ans = vqa_model.predict([trainimg_feature, trainque_feature])
@@ -380,21 +368,21 @@ def final_ans(data, num):
     fp = open(path + '/data/' + data + '.fn', 'w')
     for h in range(num):
         if data != 'Test':
-            i = h*(increase+1)  #训练集还原
+            i = h*(increase+1)
         else:
             i = h
-        fp.write(str(h+1))  #序号
+        fp.write(str(h+1))
         fp.write('	')
         fe = open(path + '/data/' + data + '.name')
         for k in fe.readlines()[h]:
             k = k.strip()
-            fp.write(k)  #图片名
+            fp.write(k)
         fp.write('	')
         fe.close()
         if np.argmax(ans[i][0],axis=0) == 0:
-            fp.write('abnormality\n')  #低频词用“异常”替换
+            fp.write('abnormality\n')
         elif (feature[i][0] == dic_q['do'] or feature[i][0] == dic_q['be']) and (np.argmax(ans[i][0],axis=0) != dic_a['ye'] and np.argmax(ans[i][0],axis=0) != dic_a['no']):
-            fp.write('no\n')    #是非题如果答案不是“yes”或“no”的替换
+            fp.write('no\n')
         else:
             for j in range(anslen):
                 an = np.argmax(ans[i][j],axis=0)
@@ -423,12 +411,12 @@ if os.path.isfile(path + '/data/Test.fn') == False:
     final_ans('Valid', num_valid)
     final_ans('Test', num_test)
 
-#删除多余文件
+#Delete extra files
 def delete_file(data):
     for name in [path + '/data/' + data + '.num', path + '/data/' + data + '.name', path + '/data/' + data + '.que', path + '/data/' + data + '.q']:  #保留对比
         os.remove(name)
     if data != 'Test':
-        for name in [path + '/data/' + data + '.a']: #, path + '/data/' + data + '.ans'保留对比
+        for name in [path + '/data/' + data + '.a']: #, path + '/data/' + data + '.ans'
             os.remove(name)
 if os.path.isfile(path + '/data/Valid.ans') == True:
     try:
@@ -437,5 +425,5 @@ if os.path.isfile(path + '/data/Valid.ans') == True:
         delete_file('Test')
     except:
         print('fail to delete some data files...')
-#结束
+#ending
 print('Finished.')
