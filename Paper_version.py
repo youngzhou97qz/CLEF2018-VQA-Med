@@ -2,21 +2,19 @@ import sys, keras, re, os
 import numpy as np
 import matplotlib.pyplot as plt
 from pattern.en import lemma
-from keras import optimizers, metrics
-from keras.layers import normalization, Input, LSTM, Dense, RepeatVector, Bidirectional, TimeDistributed, Embedding, concatenate
-from keras.models import Model, model_from_json
-from keras.preprocessing import image, text, sequence
+from keras import *
+from keras.layers import *
+from keras.models import *
+from keras.preprocessing import *
 from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import *
 from keras.applications.inception_resnet_v2 import InceptionResNetV2
 from keras.applications.inception_resnet_v2 import preprocess_input
 
 #parameter
 path = '../VQA'
-quelen = 9  #sequence length
-anslen = 6
-que_dic = 1000  #word frequency > 4
-ans_dic = 1000
+maxlen = 9  #sequence length
+dic = 1000  #word frequency > 4
 dim = 128
 increase = 20  #enhancement
 if os.path.exists(path + '/data/') == False:  #Create folder
@@ -46,15 +44,15 @@ def data_processing(data):
 
 #Processing files
 print('Generating data files...')
-if os.path.isfile(path + '/data/Test.num') == False:
+if os.path.isfile(path + '/data/Valid.num') == False:
     data_processing('Train')
     data_processing('Valid')
-    data_processing('Test')
+#    data_processing('Test')
 
 #count
 num_train = len(open(path + '/data/Train.num', 'r').readlines())
 num_valid = len(open(path + '/data/Valid.num', 'r').readlines())
-num_test = len(open(path + '/data/Test.num', 'r').readlines())
+#num_test = len(open(path + '/data/Test.num', 'r').readlines())
 
 #Processing image
 def img_processing(data):
@@ -115,12 +113,12 @@ def img_processing(data):
 
 #Image feature
 print('Turning images into vectors...')
-if os.path.isfile(path + '/data/Test_im.npy') == False:
+if os.path.isfile(path + '/data/Valid_IR2.npy') == False:
     model_1 = InceptionResNetV2(weights='imagenet')  #The TF and Keras versions are related to this code.
-    datagen = ImageDataGenerator(rotation_range=15, width_shift_range=0.1, height_shift_range=0.1, shear_range=0.1, zoom_range=0.1)  #图像增强器
+    datagen = ImageDataGenerator(rotation_range=15, width_shift_range=0.1, height_shift_range=0.1, shear_range=0.1, zoom_range=0.1)
     img_processing('Train')
     img_processing('Valid')
-    img_processing('Test')
+#    img_processing('Test')
 
 #lemmatization, stop words
 def pretreat_q(data):
@@ -152,12 +150,11 @@ def pretreat_q(data):
     fw.close()
 
 #Question preprocessing
-if os.path.isfile(path + '/data/Test.que') == False:
+if os.path.isfile(path + '/data/Valid.que') == False:
     pretreat_q('Train')
     pretreat_q('Valid')
-    pretreat_q('Test')
+#    pretreat_q('Test')
 
-#
 def pretreat_a(data):
     global train_ans, valid_ans, anslist
     fw = open(path + '/data/' + data + '.ans', 'w')
@@ -208,9 +205,10 @@ for line in lines:
     line = line.strip()
     quelist.append(line)
     valid_que.append(line)
-    for div in [' show',' scan',' image',' demonstrate',' axial',' reveal',' contrast',' enhance',' large',' enhancement', ' area',' section',' thi',' well',' soft',' side', ' view',' small',' complete',' postoperative']:
-        valid_que.append(line.replace(div, ''))
+#    for div in [' show',' scan',' image',' demonstrate',' axial',' reveal',' contrast',' enhance',' large',' enhancement', ' area',' section',' thi',' well',' soft',' side', ' view',' small',' complete',' postoperative']:
+#        valid_que.append(line.replace(div, ''))
 f.close()
+'''
 f = open(path + '/data/Test.que')
 lines = f.readlines()
 for line in lines:
@@ -218,6 +216,7 @@ for line in lines:
     test_que.append(line)
     quelist.append(line)
 f.close()
+'''
 f = open(path + '/data/Train.ans')
 lines = f.readlines()
 for line in lines:
@@ -230,44 +229,43 @@ f = open(path + '/data/Valid.ans')
 lines = f.readlines()
 for line in lines:
     line = line.strip()
-    for j in range(increase+1):
-        valid_ans.append(line)
+    valid_ans.append(line)
     anslist.append(line)
 f.close()
 
 #Tokenizer
 print('Turning Q&A into vectors...')
-tokenizer_q = text.Tokenizer(num_words=que_dic)
+tokenizer_q = text.Tokenizer(num_words=dic)
 tokenizer_q.fit_on_texts(quelist)
 trainque_feature = tokenizer_q.texts_to_sequences(train_que)
 validque_feature = tokenizer_q.texts_to_sequences(valid_que)
-testque_feature = tokenizer_q.texts_to_sequences(test_que)
-trainque_feature = sequence.pad_sequences(trainque_feature, quelen, padding='post', value=0, truncating='post')  #统一序列长度
-validque_feature = sequence.pad_sequences(validque_feature, quelen, padding='post', value=0, truncating='post')
-testque_feature = sequence.pad_sequences(testque_feature, quelen, padding='post', value=0, truncating='post')
-trainall_feature = np.concatenate([trainque_feature, validque_feature], axis=0)
+#testque_feature = tokenizer_q.texts_to_sequences(test_que)
+trainque_feature = sequence.pad_sequences(trainque_feature, maxlen, padding='post', value=0, truncating='post')
+validque_feature = sequence.pad_sequences(validque_feature, maxlen, padding='post', value=0, truncating='post')
+#testque_feature = sequence.pad_sequences(testque_feature, maxlen, padding='post', value=0, truncating='post')
+#trainall_feature = np.concatenate([trainque_feature, validque_feature], axis=0)
 
-tokenizer_a = text.Tokenizer(num_words=ans_dic)
+tokenizer_a = text.Tokenizer(num_words=dic)
 tokenizer_a.fit_on_texts(anslist)
 trainans_feature = tokenizer_a.texts_to_sequences(train_ans)
 validans_feature = tokenizer_a.texts_to_sequences(valid_ans)
-trainans_feature = sequence.pad_sequences(trainans_feature, anslen, padding='post', value=0, truncating='post')
-validans_feature = sequence.pad_sequences(validans_feature, anslen, padding='post', value=0, truncating='post')
-trainans_hot = keras.utils.to_categorical(trainans_feature, ans_dic+1)  #one-hot
-validans_hot = keras.utils.to_categorical(validans_feature, ans_dic+1)
-trainall_hot = np.concatenate([trainans_hot, validans_hot], axis=0)
+trainans_feature = sequence.pad_sequences(trainans_feature, maxlen, padding='post', value=0, truncating='post')
+validans_feature = sequence.pad_sequences(validans_feature, maxlen, padding='post', value=0, truncating='post')
+trainans_hot = keras.utils.to_categorical(trainans_feature, dic+1)  #one-hot
+validans_hot = keras.utils.to_categorical(validans_feature, dic+1)
+#trainall_hot = np.concatenate([trainans_hot, validans_hot], axis=0)
 
 #Read image feature
-trainimg_feature = np.load(path + '/data/Train_im.npy')
-validimg_feature = np.load(path + '/data/Valid_im.npy')
-testimg_feature = np.load(path + '/data/Test_im.npy')
-trainall_img = np.concatenate([trainimg_feature, validimg_feature], axis=0)
+trainimg_feature = np.load(path + '/data/Train_IR2.npy')
+validimg_feature = np.load(path + '/data/Valid_IR2.npy')
+#testimg_feature = np.load(path + '/data/Test_im.npy')
+#trainall_img = np.concatenate([trainimg_feature, validimg_feature], axis=0)
 
 #model
 print('Building model...')
 
 #image
-encoded_image = Input(shape=(1000,))
+encoded_image = Input(shape=(1536,))
 dense_image = Dense(dim*2)(encoded_image)
 batch_image = normalization.BatchNormalization()(dense_image)
 repeat_image = RepeatVector(maxlen)(batch_image)
@@ -292,11 +290,11 @@ merge_model = concatenate([batch_question, permute_attention])
 batch_model = normalization.BatchNormalization()(merge_model)
 output_model = TimeDistributed(Dense(dic+1, activation='softmax'))(batch_model)
 vqa_model = Model(inputs=[encoded_image, encode_question], outputs=output_model)
-vqa_model.summary()
+#vqa_model.summary()
 
 #compile
-nadam = optimizers.Nadam()
-vqa_model.compile(loss='categorical_crossentropy', optimizer='nadam', metrics=[metrics.categorical_accuracy])
+adam = optimizers.Adam()
+vqa_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=[metrics.categorical_accuracy])
 
 #save
 filepath = path + '/data/MODEL.hdf5'
@@ -306,7 +304,7 @@ callbacks_list = [checkpoint]
 #train
 if os.path.isfile(path + '/data/MODEL.hdf5') == False:
     print('Training model...')
-    history = vqa_model.fit([trainimg_feature, trainque_feature], trainans_hot, epochs=100, batch_size=256, validation_data=([validimg_feature, validque_feature], validans_hot), callbacks=callbacks_list, verbose=1)
+    history = vqa_model.fit([trainimg_feature, trainque_feature], trainans_hot, epochs=1, batch_size=256, validation_data=([validimg_feature, validque_feature], validans_hot), callbacks=callbacks_list, verbose=1)
     
     fig = plt.figure()
     fig.set_dpi(300)    
@@ -323,7 +321,7 @@ else:
     vqa_model.load_weights(path + '/data/MODEL.hdf5', by_name=True)  
     json_string = vqa_model.to_json()  
     vqa_model = model_from_json(json_string)
-	
+
 #evaluation
 print('Answer generating...')
 dic_q = tokenizer_q.word_index  #dic-index
@@ -333,12 +331,12 @@ ind_a ={value:key for key, value in dic_a.items()}
 
 #Correcting missing words
 def dic_fix_s(word):
-    for i in range(ans_dic):
+    for i in range(dic):
         if ind_a[i+1] == word:
             ind_a[i+1] = ind_a[i+1]+'s'
 for div in ['thi','sinu','pelvi','pancrea','thrombosi','necrosi','corpu','stenosi','metastasi','ye','venou','thrombu','uteru','thalamu','pon','esophagu','cavernou','sac','meniscu','los','conu','rib','nucleu','fibrosi','ramu','rectu','agenesi','hi','bulbu','osseou','osteomyeliti','edematou','tuberculosi','plexu','clivu','pneumocephalu','atelectasi','vermi','globu','sclerosi','iliopsoa','psoa','supraspinatu','hydronephrosi']:
     dic_fix_s(div)
-for i in range(ans_dic):
+for i in range(dic):
     if ind_a[i+1] == 'vertebra':
         ind_a[i+1] = ind_a[i+1]+'e'
     if ind_a[i+1] == 'iv':
@@ -384,9 +382,9 @@ def final_ans(data, num):
         elif (feature[i][0] == dic_q['do'] or feature[i][0] == dic_q['be']) and (np.argmax(ans[i][0],axis=0) != dic_a['ye'] and np.argmax(ans[i][0],axis=0) != dic_a['no']):
             fp.write('no\n')
         else:
-            for j in range(anslen):
+            for j in range(maxlen):
                 an = np.argmax(ans[i][j],axis=0)
-                if j != anslen-1:
+                if j != maxlen-1:
                     anext = np.argmax(ans[i][j+1],axis=0)
                     if an != 0 and anext != 0:  #前后均有词
                         if an == anext:
@@ -406,14 +404,14 @@ def final_ans(data, num):
                         fp.write('\n')
     fp.close()
     
-if os.path.isfile(path + '/data/Test.fn') == False:
+if os.path.isfile(path + '/data/Valid.fn') == False:
     final_ans('Train', num_train)
     final_ans('Valid', num_valid)
-    final_ans('Test', num_test)
+#    final_ans('Test', num_test)
 
 #Delete extra files
 def delete_file(data):
-    for name in [path + '/data/' + data + '.num', path + '/data/' + data + '.name', path + '/data/' + data + '.que', path + '/data/' + data + '.q']:  #保留对比
+    for name in [path + '/data/' + data + '.num', path + '/data/' + data + '.name', path + '/data/' + data + '.que', path + '/data/' + data + '.q']:
         os.remove(name)
     if data != 'Test':
         for name in [path + '/data/' + data + '.a']: #, path + '/data/' + data + '.ans'
@@ -422,7 +420,7 @@ if os.path.isfile(path + '/data/Valid.ans') == True:
     try:
         delete_file('Train')
         delete_file('Valid')
-        delete_file('Test')
+#        delete_file('Test')
     except:
         print('fail to delete some data files...')
 #ending
