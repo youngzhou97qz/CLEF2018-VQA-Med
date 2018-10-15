@@ -107,7 +107,7 @@ def img_processing(data):
             sys.stdout.flush()
     im = np.array(im)
     im = np.squeeze(im)
-    np.save(path + '/data/' + data + '_im.npy', im)
+    np.save(path + '/data/' + data + '_IR2.npy', im)
     print('\n')
     f.close()
 
