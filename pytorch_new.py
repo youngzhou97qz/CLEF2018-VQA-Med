@@ -464,7 +464,7 @@ def train(model, training_data, validation_data, optimizer):
               .format(loss=valid_loss, ppl=math.exp(min(valid_loss,100)), accu=100*valid_accu, elapse=(time.time()-start)/60))
         scheduler.step(valid_loss)
         
-valid_losses += [valid_loss]
+        valid_losses += [valid_loss]
         if valid_loss <= min(valid_losses):
             torch.save(model, '/home/yzhou/VQA/data/weight/model.pkl')
             print('    - [Info] The checkpoint file has been updated.')
