@@ -1,11 +1,24 @@
+import os
+import re
+import csv
 import math
 import time
+import codecs
+import string
+import warnings
 import collections
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from PIL import Image
 from tqdm import tqdm
+from scipy import spatial
+
+import nltk
+from nltk.translate.bleu_score import SmoothingFunction
+from nltk.corpus import stopwords
+from nltk.stem.snowball import SnowballStemmer
+from nltk.corpus import wordnet as wn
 
 import torch
 import torch.nn as nn
@@ -17,7 +30,6 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 import torchvision
 from torchvision import transforms, models
-
 from pytorch_pretrained_bert import BertTokenizer, BertModel
 
 # parameters
@@ -31,7 +43,55 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
 
-# preprocessing
+# ---Data processing---
+def ques_standard(text):
+    # punctuation & lower
+    text = text.strip()
+    text = re.sub(" [\s+\.\!\/_,$%^*(?)+\"\'\-]+|[+——！，。？、~@#￥%……&*（）：]+", " ", text.lower())
+    return text
+
+def answ_standard(text):
+    # punctuation & lower
+    text = text.strip()
+    text = re.sub(" [\s+\.\!\/_,$%^*(?)+\"\'\-]+|[+——！，。？、~@#￥%……&*（）：]+", " ", text.lower())
+    
+    # stop & stem
+    stop = set(stopwords.words("english"))
+    stemmer = SnowballStemmer("english")
+    temp = text.split(' ')
+    temp_list = []
+    for i in range(len(temp)):
+        if temp[i] in stop and temp[i] != 'no':
+            temp[i] = ''
+        temp[i] = stemmer.stem(temp[i])
+        temp_list.append(temp[i])
+    while '' in temp_list:
+        temp_list.remove('')
+    text = ' '.join(temp_list)
+    return text
+
+def save_QA(file_name='/home/yzhou/VQA/VQAMed2018Train/VQAMed2018Train-QA.csv', category='train'):
+    fwn = open('/home/yzhou/VQA/data/process/'+category+'_name.txt', 'w', encoding='utf-8')
+    fwq = open('/home/yzhou/VQA/data/process/'+category+'_ques.txt', 'w', encoding='utf-8')
+    fwa = open('/home/yzhou/VQA/data/process/'+category+'_answ.txt', 'w', encoding='utf-8')
+    fr = open(file_name, 'r', encoding='utf-8')
+    lines = fr.readlines()
+    for line in tqdm(lines):
+        n = line.split('\t')[1]
+        fwn.write(n+'\n')
+        q = ques_standard(line.split('\t')[2])
+        fwq.write(q+'\n')
+        a = answ_standard(line.split('\t')[3])
+        fwa.write(a+'\n')
+    fr.close()
+    fwa.close()
+    fwq.close()
+    fwn.close()
+    
+save_QA(file_name='/home/yzhou/VQA/VQAMed2018Train/VQAMed2018Train-QA.csv', category='train')
+save_QA(file_name='/home/yzhou/VQA/VQAMed2018Valid/VQAMed2018Valid-QA.csv', category='valid')
+save_QA(file_name='/home/yzhou/VQA/VQAMed2018Test/VQAMed2018Test-QA-Eval.csv', category='test')
+
 # image 3*224*224
 def readname(name):
     list_name = []
