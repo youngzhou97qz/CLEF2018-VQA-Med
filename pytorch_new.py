@@ -5,6 +5,7 @@ import math
 import time
 import codecs
 import string
+import random
 import warnings
 import collections
 import numpy as np
@@ -33,218 +34,205 @@ from torchvision import transforms, models
 from pytorch_pretrained_bert import BertTokenizer, BertModel
 
 # parameters
-BATCH = 8
+BATCH = 32
 IM_K = 19
-DIM = 768
+DIM = 1024
 DROP = 0.2
 EPOCH = 100
+MAXLEN = 30
+NUM = "1"
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-torch.manual_seed(0)
-torch.cuda.manual_seed(0)
+os.environ['PYTHONHASHSEED'] = '2019'
+random.seed(2019)
+np.random.seed(2019)
+torch.manual_seed(2019)
+torch.cuda.manual_seed(2019)
+torch.backends.cudnn.deterministic = True
 
-# ---Data processing---
+# ---Data preparation---
+stop = set(stopwords.words("english"))
+stemmer = SnowballStemmer("english")
+tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
+transform1 = transforms.Compose([transforms.Resize((224,224)), transforms.RandomResizedCrop(224,scale=(0.9,1.0),ratio=(0.9,1.1)),
+                                 transforms.RandomRotation(10), transforms.ColorJitter(brightness=0.1,contrast=0.1,saturation=0.1,hue=0.1),
+                                 transforms.ToTensor(), transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225])])
+transform2 = transforms.Compose([transforms.Resize((224,224)), transforms.ToTensor(),
+                                 transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225])])
+
+def imag2vect(file,stan_type=1):
+    f = Image.open(file)
+    if stan_type == 1:
+        imag = transform1(f)
+    else:
+        imag = transform2(f)
+    f.close()
+    if len(imag) == 1:
+        imag = torch.cat([imag,imag,imag],dim=0)
+    return imag
+
+def text2token(text):
+    text = tokenizer.tokenize(text)
+    return tokenizer.convert_tokens_to_ids(text)
+
 def ques_standard(text):
     # punctuation & lower
-    text = text.strip()
-    text = re.sub(" [\s+\.\!\/_,$%^*(?)+\"\'\-]+|[+——！，。？、~@#￥%……&*（）：]+", " ", text.lower())
-    return text
-
-def answ_standard(text):
-    # punctuation & lower
-    text = text.strip()
-    text = re.sub(" [\s+\.\!\/_,$%^*(?)+\"\'\-]+|[+——！，。？、~@#￥%……&*（）：]+", " ", text.lower())
-    
-    # stop & stem
-    stop = set(stopwords.words("english"))
-    stemmer = SnowballStemmer("english")
-    temp = text.split(' ')
+    temp = text.strip('?').split(' ')
     temp_list = []
     for i in range(len(temp)):
-        if temp[i] in stop and temp[i] != 'no':
-            temp[i] = ''
-        temp[i] = stemmer.stem(temp[i])
-        temp_list.append(temp[i])
+        if temp[i] != '':
+            temp[i] = re.sub("[\s+\.\!\/_,$%^*(+\"\')]+|[+——()?【】“”！，。？、~@#￥%……&*（）]+ ", "", temp[i].lower())
+            temp_list.append(temp[i].replace('-',' '))
+    return ' '.join(temp_list)
+
+def answ_standard(text):
+    # punctuation & lower & stop & stem
+    temp = text.strip('?').split(' ')
+    temp_list = []
+    for i in range(len(temp)):
+        if temp[i] != '':
+            temp[i] = re.sub("[\s+\.\!\/_,$%^*(+\"\')]+|[+——()?【】“”！，。？、~@#￥%……&*（）]+ ", "", temp[i].lower())
+            if temp[i] in stop and temp[i] != 'no':
+                temp[i] = ''
+            temp[i] = stemmer.stem(temp[i])
+            temp_list.append(temp[i].replace('-',' '))
     while '' in temp_list:
         temp_list.remove('')
-    text = ' '.join(temp_list)
-    return text
+    return ' '.join(temp_list)
 
-def save_QA(file_name='/home/yzhou/VQA/VQAMed2018Train/VQAMed2018Train-QA.csv', category='train'):
-    fwn = open('/home/yzhou/VQA/data/process/'+category+'_name.txt', 'w', encoding='utf-8')
-    fwq = open('/home/yzhou/VQA/data/process/'+category+'_ques.txt', 'w', encoding='utf-8')
-    fwa = open('/home/yzhou/VQA/data/process/'+category+'_answ.txt', 'w', encoding='utf-8')
-    fr = open(file_name, 'r', encoding='utf-8')
-    lines = fr.readlines()
-    for line in tqdm(lines):
-        n = line.split('\t')[1]
-        fwn.write(n+'\n')
-        q = ques_standard(line.split('\t')[2])
-        fwq.write(q+'\n')
-        a = answ_standard(line.split('\t')[3])
-        fwa.write(a+'\n')
-    fr.close()
-    fwa.close()
-    fwq.close()
-    fwn.close()
-    
-save_QA(file_name='/home/yzhou/VQA/VQAMed2018Train/VQAMed2018Train-QA.csv', category='train')
-save_QA(file_name='/home/yzhou/VQA/VQAMed2018Valid/VQAMed2018Valid-QA.csv', category='valid')
-save_QA(file_name='/home/yzhou/VQA/VQAMed2018Test/VQAMed2018Test-QA-Eval.csv', category='test')
-
-# image 3*224*224
-def readname(name):
-    list_name = []
-    f = open('/home/yzhou/VQA/data/process/' + name + '.txt','r',encoding='utf-8')
+def train_prepare(category='Train'):
+    imag, ques, answ = [], [], []
+    f = open('/home/yzhou/VQA/VQAMed2018'+category+'/VQAMed2018'+category+'-QA.csv', 'r', encoding='utf-8')
     lines = f.readlines()
     for line in lines:
-        line = line.strip()
-        list_name.append(line)
+        temp_name = line.split('\t')[1]
+        temp_imag = '/home/yzhou/VQA/VQAMed2018'+category+'/VQAMed2018'+category+'-images/'+temp_name+'.jpg'
+        temp_ques = ques_standard(line.split('\t')[2])
+        toke_ques = text2token(temp_ques)
+        temp_answ = answ_standard(line.split('\t')[3])
+        toke_answ = text2token(temp_answ)
+        if (temp_ques + temp_answ).find('ct') != -1:
+            imag.append(temp_imag)
+            ques.append(toke_ques)
+            answ.append([1]+toke_answ+[2])
+        elif (temp_ques + temp_answ).find('mri') != -1:
+            for _ in range(2):
+                imag.append(temp_imag)
+                ques.append(toke_ques)
+                answ.append([1]+toke_answ+[2])
+        else:
+            for _ in range(3):
+                imag.append(temp_imag)
+                ques.append(toke_ques)
+                answ.append([1]+toke_answ+[2])
     f.close()
-    return list_name
+    return imag, ques, answ
 
-train_name = readname('train_name')
-valid_name = readname('valid_name')
-test_name = readname('test_name')
-
-transform = transforms.Compose([transforms.Resize((224,224)),transforms.ToTensor(),
-                                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-
-def img2vec(name,list_name):
-    temp_imag = []
-    for i in tqdm(range(len(list_name))):
-        if name == 'train':
-            data = Image.open('/home/yzhou/VQA/VQAMed2018Train/VQAMed2018Train-images/' + list_name[i] + '.jpg')
-        elif name == 'valid':
-            data = Image.open('/home/yzhou/VQA/VQAMed2018Valid/VQAMed2018Valid-images/' + list_name[i] + '.jpg')
-        elif name == 'test':
-            data = Image.open('/home/yzhou/VQA/VQAMed2018Test/VQAMed2018Test-images/' + list_name[i] + '.jpg')
-        temp = transform(data)
-        if len(temp) == 1:
-            temp = temp.repeat(3,1,1)
-        temp_imag.append(temp)
-    return temp_imag
-
-train_imag = img2vec('train', train_name)
-valid_imag = img2vec('valid', valid_name)
-test_imag = img2vec('test', test_name)
-
-# Q&A
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-
-def readques(ques):
-    index = []
-    f = open('/home/yzhou/VQA/data/process/' + ques + '.txt','r',encoding='utf-8')
+def test_prepare(category='Test'):
+    name, imag, ques = [], [], []
+    f = open('/home/yzhou/VQA/VQAMed2018'+category+'/VQAMed2018'+category+'-QA-Eval.csv', 'r', encoding='utf-8')
     lines = f.readlines()
     for line in lines:
-        line = line.strip()
-        tokenized_text = tokenizer.tokenize(line)
-        indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-        index.append(indexed_tokens)
+        temp_name = line.split('\t')[1]
+        name.append(temp_name)
+        temp_imag = '/home/yzhou/VQA/VQAMed2018'+category+'/VQAMed2018'+category+'-images/'+temp_name+'.jpg'
+        imag.append(imag2vect(temp_imag, 2))
+        temp_ques = ques_standard(line.split('\t')[2])
+        toke_ques = text2token(temp_ques)
+        ques.append(toke_ques)
     f.close()
-    return index
+    return name, imag, ques
 
-train_ques = readques('train_ques')
-valid_ques = readques('valid_ques')
-test_ques = readques('test_ques')
-
-def readansw(answ):
-    index, temp_1, temp_2 = [], [1], [2]
-    f = open('/home/yzhou/VQA/data/process/' + answ + '.txt','r',encoding='utf-8')
-    lines = f.readlines()
-    for line in lines:
-        line = line.strip()
-        tokenized_text = tokenizer.tokenize(line)
-        indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-        index.append(temp_1 + indexed_tokens + temp_2)
-    f.close()
-    return index
-
-train_answ = readansw('train_answ')
-valid_answ = readansw('valid_answ')
-test_answ = readansw('test_answ')
+train_imag, train_ques, train_answ = train_prepare()
+valid_imag, valid_ques, valid_answ = train_prepare('Valid')
+test_name, test_imag, test_ques = test_prepare()
 
 # answer_dictionary
-answer = train_answ + valid_answ
-freq = collections.Counter([val for sublist in (answer) for val in sublist])
-
-def answ_label(answ,low):
-    for i in tqdm(range(len(answ))):
-        for j, num in enumerate(answ[i]):
-            if freq[num] <= low:
-                answ[i][j] = 100
-    return answ
-
-train_answ = answ_label(train_answ,5)
-valid_answ = answ_label(valid_answ,5)
-test_answ = answ_label(test_answ,5)
-
-answer = train_answ + valid_answ
+token_answers = train_answ + valid_answ
+freq = collections.Counter([val for sublist in (token_answers) for val in sublist])
+for i in range(len(token_answers)):
+    for j, num in enumerate(token_answers[i]):
+        if freq[num] <= 7:
+            token_answers[i][j] = 100
 word2index = {'[PAD]': 0, '[STA]': 1, '[END]': 2, '[UNK]': 3}
 count = 4
-for i in range(len(answer)):
-    for num in answer[i]:
+for i in range(len(token_answers)):
+    for num in token_answers[i]:
         if num != 0 and num != 1 and num != 2 and num != 100:
             if tokenizer.convert_ids_to_tokens([num])[0] not in word2index:
                 word2index[tokenizer.convert_ids_to_tokens([num])[0]] = count
                 count += 1
 index2word ={value:key for key, value in word2index.items()}
 
-# pack_data
-def prepare(imag,ques,answ):
-    images, questions, answers, labels= [], [], [], []
-    for i in tqdm(range(len(ques))):
-        if len(imag[i]) == 1:
-            imag[i] = torch.cat([imag[i],imag[i],imag[i]],dim=1)
-        for j in range(len(answ[i])-1):
-            images.append(imag[i])
-            questions.append(ques[i])
-            answers.append(answ[i][:j+1])
-            if answ[i][j+1] == 2:
-                labels.append(2)
-            else:
-                labels.append(word2index[tokenizer.convert_ids_to_tokens([answ[i][j+1]])[0]])
-    return images, questions, answers, labels
+# get_sequences
+images, questions, answers, labels= [], [], [], []
+for i in tqdm(range(len(token_answers))):
+    for j in range(len(token_answers[i])-1):
+        images.append((train_imag + valid_imag)[i])
+        questions.append((train_ques + valid_ques)[i])
+        answers.append(token_answers[i][:j+1])
+        if token_answers[i][j+1] == 2:
+            labels.append(2)
+        else:
+            labels.append(word2index[tokenizer.convert_ids_to_tokens([token_answers[i][j+1]])[0]])
 
-train_imag, train_ques, train_answ, train_label = prepare(train_imag, train_ques, train_answ)
-valid_imag, valid_ques, valid_answ, valid_label = prepare(valid_imag, valid_ques, valid_answ)
-
-print('dict_length：',len(index2word))
-print('train_quantity：',len(train_label))
-print('valid_quantity：',len(valid_label))
+data_imag, data_ques, data_answ, data_labe = [], [], [], []
+frequency = collections.Counter(labels)
+for i in range(len(labels)):
+    if frequency[labels[i]] > 400:
+        if random.random() < 400.0 / float(frequency[labels[i]]):
+            data_imag.append(images[i])
+            data_ques.append(questions[i])
+            data_answ.append(answers[i])
+            data_labe.append(labels[i])
+    else:
+        data_imag.append(images[i])
+        data_ques.append(questions[i])
+        data_answ.append(answers[i])
+        data_labe.append(labels[i])
 
 # data_loading
-class Train_data(torch.utils.data.Dataset):
-    def __init__(self,train_imag,train_ques,train_answ,train_label):
-        self.imag = train_imag
-        self.ques = train_ques
-        self.answ = train_answ
-        self.labe = train_label
+print('dict_length：',len(index2word))
+print('trainingset_length: ',len(data_labe))
+class Load_data(torch.utils.data.Dataset):
+    def __init__(self, images, questions, answers, labels):
+        self.imag = images
+        self.ques = questions
+        self.answ = answers
+        self.labe = labels
     def __getitem__(self, index):
-        return self.imag[index], self.ques[index], self.answ[index], self.labe[index]
-    def __len__(self):
-        return len(self.labe)
-
-class Valid_data(torch.utils.data.Dataset):
-    def __init__(self,valid_imag,valid_ques,valid_answ,valid_label):
-        self.imag = valid_imag
-        self.ques = valid_ques
-        self.answ = valid_answ
-        self.labe = valid_label
-    def __getitem__(self, index):
-        return self.imag[index], self.ques[index], self.answ[index], self.labe[index]
+        return imag2vect(self.imag[index], 1), self.ques[index], self.answ[index], self.labe[index]
     def __len__(self):
         return len(self.labe)
 
 def collate_fn1(data):
     return zip(*data)
 
-train_loader = torch.utils.data.DataLoader(Train_data(train_imag[:10],train_ques[:10],train_answ[:10],train_label[:10]),batch_size=BATCH,
-                                           shuffle=True,num_workers=2,collate_fn=collate_fn1)
-valid_loader = torch.utils.data.DataLoader(Valid_data(valid_imag[:10],valid_ques[:10],valid_answ[:10],valid_label[:10]),batch_size=BATCH,
-                                           shuffle=True,num_workers=2,collate_fn=collate_fn1)
+state = np.random.get_state()
+np.random.shuffle(data_imag)
+np.random.set_state(state)
+np.random.shuffle(data_ques)
+np.random.set_state(state)
+np.random.shuffle(data_answ)
+np.random.set_state(state)
+np.random.shuffle(data_labe)
 
-# model_loading
+train_loader1 = torch.utils.data.DataLoader(Load_data(data_imag[:16384], data_ques[:16384], data_answ[:16384], data_labe[:16384]),
+                                            batch_size=BATCH,shuffle=True,collate_fn=collate_fn1)
+train_loader2 = torch.utils.data.DataLoader(Load_data(data_imag[16384:32768], data_ques[16384:32768], data_answ[16384:32768], data_labe[16384:32768]),
+                                           batch_size=BATCH,shuffle=True,collate_fn=collate_fn1)
+train_loader3 = torch.utils.data.DataLoader(Load_data(data_imag[32768:49152], data_ques[32768:49152], data_answ[32768:49152], data_labe[32768:49152]),
+                                           batch_size=BATCH,shuffle=True,collate_fn=collate_fn1)
+valid_loader1 = torch.utils.data.DataLoader(Load_data(data_imag[:2048],data_ques[:2048],data_answ[:2048], data_labe[:2048])
+                                            ,batch_size=BATCH,shuffle=True,collate_fn=collate_fn1)
+valid_loader2 = torch.utils.data.DataLoader(Load_data(data_imag[16384:18432], data_ques[16384:18432],
+                                                      data_answ[16384:18432], data_labe[16384:18432])
+                                            ,batch_size=BATCH,shuffle=True,collate_fn=collate_fn1)
+valid_loader3 = torch.utils.data.DataLoader(Load_data(data_imag[32768:34816],data_ques[32768:34816],
+                                                      data_answ[32768:34816], data_labe[32768:34816])
+                                            ,batch_size=BATCH,shuffle=True,collate_fn=collate_fn1)
+
+# ---Model preparation---
 # (-1, 3. 224, 224) → (-1, IM_K, 784)
 class Transfer(nn.Module):
     def __init__(self, model1=models.resnet152(pretrained=True), model2=models.densenet161(pretrained=True)):
@@ -255,7 +243,7 @@ class Transfer(nn.Module):
             p.requires_grad=False
         self.upsamp = nn.PixelShuffle(4).to(device)
         self.conv = nn.Conv2d(266, IM_K, kernel_size=(1, 1), stride=(1, 1), bias=False).to(device)
-        self.batch = nn.BatchNorm2d(IM_K, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True).to(device)
+        self.batch = nn.BatchNorm2d(IM_K, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True).to(device)
         self.relu = nn.ReLU().to(device)
     def forward(self, v):
         for i in range(len(v)):
@@ -264,8 +252,6 @@ class Transfer(nn.Module):
             else:
                 temp = torch.cat((temp,torch.unsqueeze(v[i], 0).view(-1,3,224,224)),0)
         v = temp.to(device)
-        if len(v) == 1:
-            v = v[0].clone().detach().requires_grad_(True)
         modules1 = list(self.model1.children())[:-2]
         fix1 = nn.Sequential(*modules1).to(device)
         modules2 = list(self.model2.children())[:-1]
@@ -277,9 +263,9 @@ class Transfer(nn.Module):
         v = self.relu(v)
         return v.view(len(v),IM_K,-1)
 
-# (-1, seq_len) → (-1, seq_len, 768)
+# (-1, seq_len) → (-1, seq_len, 1024)
 class Bert(nn.Module):
-    def __init__(self, model=BertModel.from_pretrained('bert-base-uncased')):
+    def __init__(self, model=BertModel.from_pretrained('bert-large-uncased')):
         super(Bert, self).__init__()
         self.model = model.to(device)
         for p in self.parameters():
@@ -302,25 +288,25 @@ class Bert(nn.Module):
         out, _ = self.model(input_ids=qa, token_type_ids=segm, attention_mask=mask)
         return out[-2][:, :q_len, :], out[-2][:, q_len:, :], qa_mask
 
-# (-1, IM_K, 784) + (-1, seq_len, 768) → （-1, 768）
+# (-1, IM_K, 784) + (-1, seq_len, 1024) → （-1, 1024）
 class Top_down(nn.Module):
     def __init__(self):
         super(Top_down, self).__init__()
         self.norm1 = nn.Linear(784, DIM).to(device)
         self.norm2 = nn.Linear(DIM, DIM).to(device)
-        self.norm3 = weight_norm(nn.Linear(DIM, 1), dim=None).to(device)
-        self.norm4 = nn.Linear(DIM, DIM).to(device)
+        self.norm3 = weight_norm(nn.Linear(DIM//2, 1), dim=None).to(device)
+        self.norm4 = nn.Linear(DIM//2, DIM*2).to(device)
         self.drop1 = nn.Dropout(DROP).to(device)
         self.drop2 = nn.Dropout(DROP).to(device)
     def forward(self, v, t):
-        v = F.relu(self.norm1(v))
-        t = F.relu(self.norm2(t))
-        t = torch.mean(t, dim=1)
+        v = F.glu(self.norm1(v))
+        t = F.glu(self.norm2(t))
+        t = torch.sum(t, dim=1)
         att = v * t.unsqueeze(1).repeat(1, IM_K, 1)
         att = F.softmax(self.norm3(self.drop1(att)), 1)
         v = (att * v).sum(1)
         tv = self.drop2(t * v)
-        tv = F.relu(self.norm4(tv))
+        tv = F.glu(self.norm4(tv))
         return tv, att
 
 class MultiHeadAttention(nn.Module):
@@ -355,13 +341,13 @@ class MultiHeadAttention(nn.Module):
 class PositionwiseFeedForward(nn.Module):
     def __init__(self):
         super(PositionwiseFeedForward, self).__init__()
-        self.w_1 = nn.Linear(DIM, DIM//4).to(device)
+        self.w_1 = nn.Linear(DIM, DIM//2).to(device)
         self.w_2 = nn.Linear(DIM//4, DIM).to(device)
         self.dropout = nn.Dropout(DROP).to(device)
     def forward(self, x):
-        return self.w_2(self.dropout(F.relu(self.w_1(x))))
+        return self.w_2(self.dropout(F.glu(self.w_1(x))))
 
-# (-1, ans_len, 1024) + (-1, que_len, 1024) + (-1, ans_len, que_len) → (-1, 512)
+# (-1, ans_len, 1024) + (-1, que_len, 1024) + (-1, ans_len, que_len) → (-1, 1024)
 class Transformer(nn.Module):
     def __init__(self):
         super(Transformer, self).__init__()
@@ -369,9 +355,9 @@ class Transformer(nn.Module):
         self.positionwise_feed_forward = PositionwiseFeedForward()
         self.drop1 = nn.Dropout(DROP).to(device)
         self.drop2 = nn.Dropout(DROP).to(device)
-        self.layernorm1 = nn.LayerNorm(DIM, eps=1e-6).to(device)
-        self.layernorm2 = nn.LayerNorm(DIM, eps=1e-6).to(device)
-        self.layernorm3 = nn.LayerNorm(DIM, eps=1e-6).to(device)
+        self.layernorm1 = nn.LayerNorm(DIM, eps=1e-5).to(device)
+        self.layernorm2 = nn.LayerNorm(DIM, eps=1e-5).to(device)
+        self.layernorm3 = nn.LayerNorm(DIM, eps=1e-5).to(device)
     def forward(self, origin, ques, mask):
         answ = self.layernorm1(origin)
         ques = self.layernorm2(ques)
@@ -379,10 +365,10 @@ class Transformer(nn.Module):
         origin = origin + self.drop1(out)
         out = self.layernorm3(origin)
         out = self.positionwise_feed_forward(out)
-        out = (origin + self.drop2(out)).mean(1)
+        out = (origin + self.drop2(out)).sum(1)
         return out, att
 
-# output:(-1, dic_len)
+# (-1, 1024) + (-1, 1024) + (-1, 1024) → (-1, dic_len)
 class Final_model(nn.Module):
     def __init__(self, dic_len=len(index2word)):
         super(Final_model, self).__init__()
@@ -391,7 +377,7 @@ class Final_model(nn.Module):
         self.topdown1 = Top_down()
         self.topdown2 = Top_down()
         self.tranformer = Transformer()
-        self.norm1 = nn.Linear(3*DIM, DIM//4).to(device)
+        self.norm1 = nn.Linear(3*DIM, DIM//2).to(device)
         self.norm2 = nn.Linear(DIM//4, dic_len).to(device)
         self.drop = nn.Dropout(DROP).to(device)
         self.out = nn.LogSoftmax(dim=-1).to(device)
@@ -402,19 +388,14 @@ class Final_model(nn.Module):
         feat2, va_att = self.topdown2(imag, answ)
         feat3, qa_att = self.tranformer(answ, ques, mask)
         out = torch.cat((feat1, feat2, feat3), -1)
-        out = F.relu(self.norm1(out))
+        out = F.glu(self.norm1(out))
         out = self.norm2(self.drop(out))
         out = self.out(out)
         return out, vq_att, va_att, qa_att
 
-# from torchsummary import summary
-# summary(Top_down(), [(IM_K, 784),(22, DIM)])
-# summary(MultiHeadAttention(), [(4, DIM),(18, DIM),(18, DIM),(4,18)])
-# summary(PositionwiseFeedForward(), (4, DIM))
-
-# training_loading
+# ---Training---
 class labelsmoothing(nn.Module):
-    def __init__(self, smoothing=0.1, dic_len=len(index2word), bias=3):
+    def __init__(self, smoothing=0.1, dic_len=len(index2word), bias=1):
         super(labelsmoothing, self).__init__()
         self.criterion = nn.KLDivLoss(reduction='sum').to(device)
         self.dic_len = dic_len
@@ -445,18 +426,6 @@ class labelsmoothing(nn.Module):
                 correct += 1
         return self.criterion(pred, gt), correct
 
-def show_att(question,answer,attention):
-    fig = plt.figure()
-    fig.set_dpi(300)
-    ax = fig.add_subplot(111)
-    cax = ax.matshow(attention.detach().cpu().numpy(), cmap='bone')
-    fig.colorbar(cax)
-    ax.set_xticklabels([''] + tokenizer.convert_ids_to_tokens(question), rotation=90)
-    ax.set_yticklabels([''] + tokenizer.convert_ids_to_tokens(answer[1:]))
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
-    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
-    plt.show()
-   
 def train_epoch(model, training_data, optimizer):
     model.train()
     total_loss, n_word_total, n_word_correct = 0, 0, 0
@@ -501,16 +470,16 @@ def eval_epoch(model, validation_data):
     accuracy = n_word_correct/n_word_total
     return loss_per_word, accuracy, questions, answers, attentions
 
-def train(model, training_data, validation_data, optimizer):
-    log_train_file = '/home/yzhou/VQA/data/weight/train.log'
-    log_valid_file = '/home/yzhou/VQA/data/weight/valid.log'
+def train(model, training_data, validation_data, optimizer, num='1'):
+    log_train_file = '/home/yzhou/VQA/data/weight/train' + NUM + num + '.log'
+    log_valid_file = '/home/yzhou/VQA/data/weight/valid' + NUM + num + '.log'
     with open(log_train_file, 'w') as log_tf, open(log_valid_file, 'w') as log_vf:
         log_tf.write('epoch, loss, ppl, accuracy\n')
         log_vf.write('epoch, loss, ppl, accuracy\n')
 
     valid_losses = []
     patient = 0
-    scheduler = ReduceLROnPlateau(optimizer, factor=0.5, patience=3, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, factor=0.2, patience=4, verbose=True)
     for epoch_i in range(EPOCH):
         print('[ Epoch', epoch_i, ']')
         start = time.time()
@@ -526,14 +495,12 @@ def train(model, training_data, validation_data, optimizer):
         
         valid_losses += [valid_loss]
         if valid_loss <= min(valid_losses):
-            torch.save(model, '/home/yzhou/VQA/data/weight/model.pkl')
+            torch.save({'model': model.state_dict()}, '/home/yzhou/VQA/data/weight/model' + NUM + num + '.chkpt')
             print('    - [Info] The checkpoint file has been updated.')
-            if epoch_i > 6:
-                for i in range(len(valid_ques)):
-                    show_att(valid_ques[i],valid_answ[i],valid_att[i][0])
+            patient = 0
         else:
             patient += 1
-            if patient > 20:
+            if patient > 6:
                 break
                 
         if log_train_file and log_valid_file:
@@ -542,83 +509,130 @@ def train(model, training_data, validation_data, optimizer):
                     epoch=epoch_i, loss=train_loss, ppl=math.exp(min(train_loss, 100)), accu=100*train_accu))
                 log_vf.write('{epoch},{loss: 8.5f},{ppl: 8.5f},{accu: 3.5f}\n'.format(
                     epoch=epoch_i, loss=valid_loss, ppl=math.exp(min(valid_loss, 100)), accu=100*valid_accu))
-                  
+                
 # training
 model = Final_model()
 for p in model.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
 model_opt = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
-train(model, train_loader, valid_loader, model_opt)
+train(model, train_loader1, valid_loader1, model_opt, '1')
 
-# Visualization
-loss_train, loss_valid, accu_train, accu_valid = [], [], [], []
-f = open('/home/yzhou/VQA/data/weight/train.log')
-next(f)
-lines = f.readlines()
-for line in lines:
-    line = line.strip()
-    loss_train.append(float(line.split(', ')[1]))
-    accu_train.append(float(line.split(', ')[3]))
-f.close()
-f = open('/home/yzhou/VQA/data/weight/valid.log')
-next(f)
-lines = f.readlines()
-for line in lines:
-    line = line.strip()
-    loss_valid.append(float(line.split(', ')[1]))
-    accu_valid.append(float(line.split(', ')[3]))
-f.close()
+for p in model.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+model_opt = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
+train(model, train_loader2, valid_loader2, model_opt, '2')
 
-fig = plt.figure()
-fig.set_dpi(300)
-plt.plot(loss_train)
-plt.plot(loss_valid)
-plt.title('Loss')
-plt.ylabel('loss')
-plt.xlabel('epoch')
-plt.legend(['train', 'valid'], loc='upper right')
-plt.show()
-plt.savefig("/home/yzhou/VQA/data/weight/loss.jpg")
+for p in model.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+model_opt = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
+train(model, train_loader3, valid_loader3, model_opt, '3')
 
-fig = plt.figure()
-fig.set_dpi(300)
-plt.plot(accu_train)
-plt.plot(accu_valid)
-plt.title('Accuracy')
-plt.ylabel('accu')
-plt.xlabel('epoch')
-plt.legend(['train', 'valid'], loc='lower right')
-plt.show()
-plt.savefig("/home/yzhou/VQA/data/weight/accuracy.jpg")
+# ---Visualization---
+def show_attention(question,answer,attention):
+    y_lab = []
+    for i in range(len(answer)):
+        if answer[i] != 2:
+            y_lab.append(index2word[answer[i]])
+        else:
+            y_lab.append(index2word[answer[i]])
+            break
+    fig = plt.figure()
+    fig.set_dpi(300)
+    ax = fig.add_subplot(111)
+    cax = ax.matshow(attention[:len(y_lab)], cmap='bone')
+    fig.colorbar(cax)
+    ax.set_xticklabels([''] + tokenizer.convert_ids_to_tokens(question), rotation=90)
+    ax.set_yticklabels([''] + y_lab)
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+    plt.show()
 
-# evaluation
-model = Final_model()
-checkpoint = torch.load('/home/yzhou/VQA/data/weight/model.chkpt')
-model.load_state_dict(checkpoint['model'])
+def show_loss(folder='/home/yzhou/VQA/data/weight/', name='11'):
+    loss_train, loss_valid, accu_train, accu_valid = [], [], [], []
+    f = open(folder + 'train' + name + '.log')
+    next(f)
+    lines = f.readlines()
+    for line in lines:
+        line = line.strip()
+        loss_train.append(float(line.split(', ')[1]))
+        accu_train.append(float(line.split(', ')[3]))
+    f.close()
+    f = open(folder + 'valid' + name + '.log')
+    next(f)
+    lines = f.readlines()
+    for line in lines:
+        line = line.strip()
+        loss_valid.append(float(line.split(', ')[1]))
+        accu_valid.append(float(line.split(', ')[3]))
+    f.close()
+    fig = plt.figure()
+    fig.set_dpi(300)
+    plt.plot(loss_train)
+    plt.plot(loss_valid)
+    plt.title('Loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'valid'], loc='upper right')
+    plt.show()
+    plt.savefig(folder + 'loss' + name + '.jpg')
+    fig = plt.figure()
+    fig.set_dpi(300)
+    plt.plot(accu_train)
+    plt.plot(accu_valid)
+    plt.title('Accuracy')
+    plt.ylabel('accu')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'valid'], loc='lower right')
+    plt.show()
+    plt.savefig(folder + 'accuracy' + name + '.jpg')
 
-def beam_search(images, questions, k=2):
+# show_loss(name='11')
+
+# ---Evaluation---
+# loading weights
+model_a, model_b, model_c = Final_model(), Final_model(), Final_model()
+model_a.load_state_dict(torch.load('/home/yzhou/VQA/data/weight/model' + NUM + '1.chkpt')['model'])
+model_b.load_state_dict(torch.load('/home/yzhou/VQA/data/weight/model' + NUM + '2.chkpt')['model'])
+model_c.load_state_dict(torch.load('/home/yzhou/VQA/data/weight/model' + NUM + '3.chkpt')['model'])
+
+def beam_search(images, questions, k=2, bias=-999999., att=False):
     images = images.unsqueeze(0).repeat(k,1,1,1)
     questions = tuple([questions for _ in range(k)])
+    attention = []
     for i in range(MAXLEN):
+        model_a.eval()
+        model_b.eval()
+        model_c.eval()
         if i == 0:
             answers = tuple([[1] for _ in range(k)])
             scores = [0] * k
             last_choices = [1] * k
-            model.eval()
             with torch.no_grad():
-                pred, _1, _2, _3 = model(images, questions, answers)
+                pred_a, _1, _2, at_1 = model_a(images, questions, answers)
+                pred_b, _4, _5, at_2 = model_b(images, questions, answers)
+                pred_c, _7, _8, at_3 = model_c(images, questions, answers)
+            pred = pred_a + pred_b + pred_c
+            attention.append((at_1.mean(1)[0][-1].detach().cpu().numpy()+at_2.mean(1)[0][-1].detach().cpu().numpy()+
+                              at_3.mean(1)[0][-1].detach().cpu().numpy())/3)
             choices = np.argsort(pred.cpu())[:,-k:]
             for j in range(k):
                 temp_choice = int(choices[0][-1-j])
                 answers[j].append(temp_choice)
                 if temp_choice in last_choices or temp_choice in [2, 3]:
-                    scores[j] += -333333
+                    scores[j] += bias
                 scores[j] += pred[0][temp_choice].cpu()
                 last_choices[j] = temp_choice
         else:
             with torch.no_grad():
-                pred, _1, _2, _3 = model(images, questions, answers)
+                pred_a, _1, _2, at_1 = model_a(images, questions, answers)
+                pred_b, _4, _5, at_2 = model_b(images, questions, answers)
+                pred_c, _7, _8, at_3 = model_c(images, questions, answers)
+            pred = pred_a + pred_b + pred_c
+            attention.append((at_1.mean(1)[0][-1].detach().cpu().numpy()+at_2.mean(1)[0][-1].detach().cpu().numpy()+
+                              at_3.mean(1)[0][-1].detach().cpu().numpy())/3)
             choices = np.argsort(pred.cpu())[:,-k:]
             answers = list(answers)
             temp_answers, temp_scores = [], []
@@ -627,8 +641,8 @@ def beam_search(images, questions, k=2):
                     temp_choice = int(choices[j][-1-m])
                     temp_answers.append(answers[j] + [temp_choice])
                     if temp_choice in last_choices or temp_choice in [2, 3]:
-                        scores[j] += -333333
-                        temp_scores.append(scores[j] + pred[j][temp_choice].cpu() - torch.tensor(333333.))
+                        scores[j] += bias
+                        temp_scores.append(scores[j] + pred[j][temp_choice].cpu() + torch.tensor(bias))
                     else:
                         temp_scores.append(scores[j] + pred[j][temp_choice].cpu())
             choosing = np.argsort(temp_scores)
@@ -637,17 +651,40 @@ def beam_search(images, questions, k=2):
                 scores[j] = temp_scores[choosing[-1-j]]
                 last_choices[j] = temp_answers[choosing[-1-j]][-1]
             answers = tuple(answers)
+    if att == True:
+        show_attention(questions[0], answers[0], np.asarray(attention))
     for i in range(len(answers[0])):
-        if answers[0][i] not in [0, 2]:
-            answers[0][i] = index2word[answers[0][i]]
-        else:
+        if answers[0][i] in [3]:
+            answers[0][i] = ''
+        elif answers[0][i] in [0,2]:
             break
-    return ' '.join(answers[0][1:i+1]).replace(' ##', '')
+        else:
+            answers[0][i] = index2word[answers[0][i]]
+    count = 0
+    while '' in answers[0]:
+        answers[0].remove('')
+        count += 1
+    if questions[0][0] in [2003,2024,2079,2515] and answers[0][1] not in ['yes','no']:
+        return 'no'
+    else:
+        return ' '.join(answers[0][1:i-count]).replace(' ##', '')
 
-f = open('/home/yzhou/VQA/data/result/1.csv', 'w')
+f = open('/home/yzhou/VQA/data/result/' + NUM + '1.csv', 'w')
 for i in tqdm(range(len(test_name))):
     f.write(str(i+1) + '	' + test_name[i] + '	')
-    f.write(beam_search(test_imag[i], test_ques[i]) + '\n')
+    f.write(beam_search(test_imag[i], test_ques[i], bias=-999999.) + '\n')
+f.close()
+
+f = open('/home/yzhou/VQA/data/result/' + NUM + '2.csv', 'w')
+for i in tqdm(range(len(test_name))):
+    f.write(str(i+1) + '	' + test_name[i] + '	')
+    f.write(beam_search(test_imag[i], test_ques[i], bias=-99999.) + '\n')
+f.close()
+
+f = open('/home/yzhou/VQA/data/result/' + NUM + '3.csv', 'w')
+for i in tqdm(range(len(test_name))):
+    f.write(str(i+1) + '	' + test_name[i] + '	')
+    f.write(beam_search(test_imag[i], test_ques[i], bias=-9999.) + '\n')
 f.close()
 
 class VqaMedEvaluator:
@@ -825,9 +862,15 @@ class VqaMedEvaluator:
         return pairs
     def line_nbr_string(self, line_nbr):
         return "(Line nbr {})".format(line_nbr)
-
+    
 gt_file_path = "/home/yzhou/VQA/data/result/gt_file.csv"
-submission_file_path = "/home/yzhou/VQA/data/result/1.csv"
 evaluator = VqaMedEvaluator(gt_file_path)
+submission_file_path = '/home/yzhou/VQA/data/result/' + NUM + '1.csv'
 result = evaluator._evaluate(submission_file_path)
-print(result)
+print('1: ', result)
+submission_file_path = '/home/yzhou/VQA/data/result/' + NUM + '2.csv'
+result = evaluator._evaluate(submission_file_path)
+print('2: ', result)
+submission_file_path = '/home/yzhou/VQA/data/result/' + NUM + '3.csv'
+result = evaluator._evaluate(submission_file_path)
+print('3: ', result)
